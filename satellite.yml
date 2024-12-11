@@ -24,8 +24,9 @@
     def_scenario: "satellite"
 
     # Standard Values
-    sat_version: "6.10"
-    base_os: "rhel7"
+    sat_version: "6.16"
+    base_os: "rhel8"
+    sat_tuning: "default"
 
     # Path to the manifest file to be used during the installation
     manifest_path: "manifest.zip"
@@ -39,11 +40,32 @@
     #     var: ansible_facts
 
     # Firewall
-    - name: Disabling and Stopping firewalld
+    - name: Enabling and Starting firewalld
       ansible.builtin.systemd:
         name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Configure firewalld for satellite
+      ansible.builtin.firewalld:
+        port: "{{ item }}"
+        permanent: yes
+        immediate: yes
+        state: enabled
+      loop:
+        - "80/tcp"
+        - "443/tcp"
+        - "5647/tcp"
+        - "8000/tcp"
+        - "8140/tcp"
+        - "9090/tcp"
+
+    - name: Disabling fapolicyd for Satellite prior to 6.15
+      ansible.builtin.systemd:
+        name: fapolicyd
         state: stopped
         enabled: no
+      when: base_os == "rhel8" and sat_version < "6.15"
 
     # Local Name Resolution
     - name: Adding the entry to /etc/hosts
@@ -214,13 +236,19 @@
             (sat_version == "6.12" and base_os == "rhel8") or
             (sat_version == "6.13" and base_os == "rhel8") or
             (sat_version == "6.14" and base_os == "rhel8") or
-            (sat_version == "6.15" and base_os == "rhel8")
+            (sat_version == "6.15" and base_os == "rhel8") or
+            (sat_version == "6.16" and base_os == "rhel8")
 
 
     # Packages
     - name: Installing Satellite Package
       ansible.builtin.yum:
         name: satellite
+        state: present
+
+    - name: Installing Ansible redhat.satellite collection Package
+      ansible.builtin.yum:
+        name: ansible-collection-redhat-satellite
         state: present
 
     # Add this here, before runing the installer
@@ -243,14 +271,14 @@
     # Sometimes seeing sat611 failing during the installation because the server was unresponsive. It probably will fix this behavior.
     # when rerunning the playbook/installer.
     # 404 Client Error: Not Found for url: https://wallsat611-rhel8.d.sysmgmt.cee.********.com/apidoc/v2.json
-    - name: Foreman-rake apipie:cache
+    #- name: Foreman-rake apipie:cache
       # command: foreman-rake apipie:cache
       # Adding only the en version to speed up this process, instead of a lot of idioms
       # command: bash -c 'export FOREMAN_APIPIE_LANGS=en && foreman-rake apipie:cache --trace'
-      command: bash -c 'foreman-rake apipie:cache --trace'
-      when: base_os == "rhel7" or base_os == "rhel8"
-      tags:
-        - api
+    #  command: bash -c 'foreman-rake apipie:cache --trace'
+    #  when: base_os == "rhel7" or base_os == "rhel8"
+    #  tags:
+    #    - api
 
     # Calling the installer
     # When using the collection, it's failing for 6.7 or less because of the flag "--detailed something"
@@ -275,8 +303,8 @@
         satellite_installer_options:
           - '--foreman-initial-organization "{{ sat_org }}"'
           - '--foreman-initial-admin-password {{ sat_pass }}'
+          - '--tuning {{sat_tuning}}'
       when: sat_version == "6.8" or sat_version == "6.9" or sat_version == "6.10" or sat_version == "6.11" or sat_version == "6.12" or sat_version == "6.13" or sat_version == "6.14" or sat_version == "6.15" or sat_version == "6.16"
-
 
     # Importing the manifest
     - import_role:
